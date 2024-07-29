@@ -1,34 +1,13 @@
 % VLFeat kütüphanesini yükleme
-run('C:\Users\pc\Desktop\Downloads\vlfeat-0.9.21\toolbox\vl_setup.m');
+run('C:/Users/pc/Desktop/Downloads/vlfeat-0.9.21/toolbox/vl_setup');
 
-% Kalibrasyon verilerini yükleme
-load('calibrationSession1.mat', 'calibrationSession');
-
-% 'calibrationSession' içindeki 'CameraParameters' alanını kullanarak 'cameraParams' elde etme
-cameraParams = calibrationSession.CameraParameters;
-
-% Intrinsics değerini elde etme
-intrinsics = cameraParams.Intrinsics;
-
-% Balık gözü görüntüsünü okuma ve düzeltme
-fisheyeImage1 = imread('Im_L_1.png');
-fisheyeImage2 = imread('Im_R_1.png');
-
-undistortedImage1 = undistortFisheyeImage(fisheyeImage1, intrinsics, 'OutputView', 'full');
-undistortedImage2 = undistortFisheyeImage(fisheyeImage2, intrinsics, 'OutputView', 'full');
-
-% Sonucu gösterme
-figure;
-imshowpair(fisheyeImage1, undistortedImage1, 'montage');
-title('Original (left) vs. Undistorted (right) Image 1');
-
-figure;
-imshowpair(fisheyeImage2, undistortedImage2, 'montage');
-title('Original (left) vs. Undistorted (right) Image 2');
+% Balık gözü görüntüsünü okuma
+fisheyeImage1 = imread('1.jpeg');
+fisheyeImage2 = imread('2.jpeg');
 
 % Grayscale'e dönüştürme
-grayImage1 = single(rgb2gray(undistortedImage1));
-grayImage2 = single(rgb2gray(undistortedImage2));
+grayImage1 = single(rgb2gray(fisheyeImage1));
+grayImage2 = single(rgb2gray(fisheyeImage2));
 
 % SIFT özelliklerini tespit etme
 [frames1, descriptors1] = vl_sift(grayImage1);
@@ -48,33 +27,48 @@ end
 
 % Eşleşen noktaları görselleştirme
 figure;
-showMatchedFeatures(undistortedImage1, undistortedImage2, matchedPoints1, matchedPoints2, 'montage');
+showMatchedFeatures(fisheyeImage1, fisheyeImage2, matchedPoints1, matchedPoints2, 'montage');
 title('Matched Points');
 
 % Homografi matrisini tahmin etme
 [tform, inlierPoints1, inlierPoints2] = estimateGeometricTransform2D(matchedPoints1, matchedPoints2, 'projective', ...
-    'MaxDistance', 3, 'Confidence', 99, 'MaxNumTrials', 10000);
+    'MaxDistance', 3, 'Confidence', 99.9, 'MaxNumTrials', 10000);
 
 % Geometrik dönüşüm matrisini inceleme
 disp('Homografi matrisi:');
 disp(tform.T);
 
 % Görüntülerin boyutlarını belirleme
-imageSize = size(undistortedImage1);
+imageSize = size(fisheyeImage1);
 
 % İki görüntüyü birleştirmek için boş bir kanvas oluşturma
-outputView = imref2d(imageSize);
+outputView = imref2d([imageSize(1) imageSize(2)*2]);
 
 % Birinci görüntüyü yeni kanvasa yerleştirme
-warpedImage1 = imwarp(undistortedImage1, tform, 'OutputView', outputView);
+warpedImage1 = imwarp(fisheyeImage1, tform, 'OutputView', outputView);
 
 % İkinci görüntüyü de aynı kanvasa yerleştirme
-warpedImage2 = imwarp(undistortedImage2, tform, 'OutputView', outputView);
+warpedImage2 = imwarp(fisheyeImage2, projective2d(eye(3)), 'OutputView', outputView);
 
-% İki görüntüyü birleştirme
-stitchedImage = max(warpedImage1, warpedImage2);
+% Blend maskesi oluşturma
+mask1 = zeros(size(warpedImage1, 1), size(warpedImage1, 2));
+mask1(:, 1:imageSize(2)) = 1;
+mask2 = 1 - mask1;
+
+% Gaussian blur uygulayarak maskeleri yumuşatma
+sigma = 50;
+mask1 = imgaussfilt(mask1, sigma);
+mask2 = imgaussfilt(mask2, sigma);
+
+% Maskeleri normalize etme
+maskSum = mask1 + mask2;
+mask1 = mask1 ./ maskSum;
+mask2 = mask2 ./ maskSum;
+
+% Blend işlemi
+blendedImage = uint8(mask1 .* double(warpedImage1) + mask2 .* double(warpedImage2));
 
 % Sonucu görselleştirme
 figure;
-imshow(stitchedImage);
-title('Stitched Image');
+imshow(blendedImage, []);
+title('Stitched Image with Blending');
