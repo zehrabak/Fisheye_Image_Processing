@@ -1,9 +1,9 @@
 % VLFeat kütüphanesini yükleme
 run('C:/Users/pc/Desktop/Downloads/vlfeat-0.9.21/toolbox/vl_setup');
 
-% Balık gözü görüntüsünü okuma
-fisheyeImage1 = imread('1.jpeg');
-fisheyeImage2 = imread('2.jpeg');
+% Balık gözü görüntüsünü okuma ve düzeltme
+fisheyeImage1 = imread('2.jpeg');
+fisheyeImage2 = imread('1.jpeg');
 
 % Grayscale'e dönüştürme
 grayImage1 = single(rgb2gray(fisheyeImage1));
@@ -39,36 +39,37 @@ disp('Homografi matrisi:');
 disp(tform.T);
 
 % Görüntülerin boyutlarını belirleme
-imageSize = size(fisheyeImage1);
+imageSize1 = size(fisheyeImage1);
+imageSize2 = size(fisheyeImage2);
+outputSize = [max(imageSize1(1), imageSize2(1)), imageSize1(2) + imageSize2(2)];
 
 % İki görüntüyü birleştirmek için boş bir kanvas oluşturma
-outputView = imref2d([imageSize(1) imageSize(2)*2]);
+outputView = imref2d(outputSize);
 
 % Birinci görüntüyü yeni kanvasa yerleştirme
 warpedImage1 = imwarp(fisheyeImage1, tform, 'OutputView', outputView);
 
 % İkinci görüntüyü de aynı kanvasa yerleştirme
-warpedImage2 = imwarp(fisheyeImage2, projective2d(eye(3)), 'OutputView', outputView);
+tform2 = affine2d(eye(3));
+warpedImage2 = imwarp(fisheyeImage2, tform2, 'OutputView', outputView);
 
-% Blend maskesi oluşturma
-mask1 = zeros(size(warpedImage1, 1), size(warpedImage1, 2));
-mask1(:, 1:imageSize(2)) = 1;
-mask2 = 1 - mask1;
+% Maskeleri oluşturma
+mask1 = ones(size(warpedImage1, 1), size(warpedImage1, 2));
+mask2 = ones(size(warpedImage2, 1), size(warpedImage2, 2));
 
-% Gaussian blur uygulayarak maskeleri yumuşatma
-sigma = 50;
-mask1 = imgaussfilt(mask1, sigma);
-mask2 = imgaussfilt(mask2, sigma);
+% Yumuşak geçiş için maskeleri oluşturma
+mask1(:, 1:imageSize1(2)) = repmat(linspace(1, 0, imageSize1(2)), imageSize1(1), 1);
+mask2(:, end-imageSize2(2)+1:end) = repmat(linspace(0, 1, imageSize2(2)), imageSize2(1), 1);
 
 % Maskeleri normalize etme
 maskSum = mask1 + mask2;
 mask1 = mask1 ./ maskSum;
 mask2 = mask2 ./ maskSum;
 
-% Blend işlemi
-blendedImage = uint8(mask1 .* double(warpedImage1) + mask2 .* double(warpedImage2));
+% Blending işlemi
+blendedImage = uint8(double(warpedImage1) .* mask1 + double(warpedImage2) .* mask2);
 
 % Sonucu görselleştirme
 figure;
 imshow(blendedImage, []);
-title('Stitched Image with Blending');
+title('Stitched Image with Improved Blending');
