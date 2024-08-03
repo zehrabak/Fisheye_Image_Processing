@@ -1,9 +1,9 @@
 % VLFeat kütüphanesini yükleme
 run('C:/Users/pc/Desktop/Downloads/vlfeat-0.9.21/toolbox/vl_setup');
 
-% Balık gözü görüntüsünü okuma ve düzeltme
-fisheyeImage1 = imread('2.jpeg');
-fisheyeImage2 = imread('1.jpeg');
+% Balık gözü görüntüsünü okuma
+fisheyeImage1 = imread('1.jpeg');
+fisheyeImage2 = imread('2.jpeg');
 
 % Grayscale'e dönüştürme
 grayImage1 = single(rgb2gray(fisheyeImage1));
@@ -39,37 +39,73 @@ disp('Homografi matrisi:');
 disp(tform.T);
 
 % Görüntülerin boyutlarını belirleme
-imageSize1 = size(fisheyeImage1);
-imageSize2 = size(fisheyeImage2);
-outputSize = [max(imageSize1(1), imageSize2(1)), imageSize1(2) + imageSize2(2)];
+imageSize = size(fisheyeImage1);
 
 % İki görüntüyü birleştirmek için boş bir kanvas oluşturma
-outputView = imref2d(outputSize);
+outputView = imref2d([imageSize(1) imageSize(2)*2]);
 
 % Birinci görüntüyü yeni kanvasa yerleştirme
 warpedImage1 = imwarp(fisheyeImage1, tform, 'OutputView', outputView);
 
-% İkinci görüntüyü de aynı kanvasa yerleştirme
-tform2 = affine2d(eye(3));
-warpedImage2 = imwarp(fisheyeImage2, tform2, 'OutputView', outputView);
+% İkinci görüntüyü yeni boyutlarına göre yeniden boyutlandırma
+warpedImage2 = imwarp(fisheyeImage2, affine2d(eye(3)), 'OutputView', outputView);
 
-% Maskeleri oluşturma
-mask1 = ones(size(warpedImage1, 1), size(warpedImage1, 2));
-mask2 = ones(size(warpedImage2, 1), size(warpedImage2, 2));
+% Boyutları eşitleme
+warpedImage2 = imresize(warpedImage2, size(warpedImage1(:,:,1)));
 
-% Yumuşak geçiş için maskeleri oluşturma
-mask1(:, 1:imageSize1(2)) = repmat(linspace(1, 0, imageSize1(2)), imageSize1(1), 1);
-mask2(:, end-imageSize2(2)+1:end) = repmat(linspace(0, 1, imageSize2(2)), imageSize2(1), 1);
+% Laplacian Pyramid Blending Fonksiyonları
+function [lp, gp] = laplacianPyramid(img, level)
+    gp = cell(level, 1);
+    lp = cell(level, 1);
+    current = img;
+    for i = 1:level
+        gp{i} = current;
+        down = impyramid(current, 'reduce');
+        up = imresize(impyramid(down, 'expand'), size(current(:,:,1)));
+        lp{i} = current - up;
+        current = down;
+    end
+    gp{level} = current;
+    lp{level} = current;
+end
 
-% Maskeleri normalize etme
-maskSum = mask1 + mask2;
-mask1 = mask1 ./ maskSum;
-mask2 = mask2 ./ maskSum;
+function blended = blendPyramids(lp1, lp2, mask, level)
+    blended = cell(level, 1);
+    for i = 1:level
+        blended{i} = lp1{i} .* mask + lp2{i} .* (1 - mask);
+    end
+end
 
-% Blending işlemi
-blendedImage = uint8(double(warpedImage1) .* mask1 + double(warpedImage2) .* mask2);
+function result = reconstructPyramid(lp, level)
+    current = lp{level};
+    for i = level-1:-1:1
+        up = imresize(impyramid(current, 'expand'), size(lp{i}(:,:,1)));
+        current = lp{i} + up;
+    end
+    result = current;
+end
 
-% Sonucu görselleştirme
+% Görüntüler için Laplacian Pyramid Oluşturma
+levels = 4; % Piramit seviyesi
+[lp1, gp1] = laplacianPyramid(im2double(warpedImage1), levels);
+[lp2, gp2] = laplacianPyramid(im2double(warpedImage2), levels);
+
+% Maskeleri Oluşturma
+mask = ones(size(warpedImage1, 1), size(warpedImage1, 2));
+blendWidth = round(imageSize(2) / 6);
+mask(:, end-blendWidth+1:end) = repmat(linspace(1, 0, blendWidth), size(mask, 1), 1);
+mask(:, 1:blendWidth) = repmat(linspace(0, 1, blendWidth), size(mask, 1), 1);
+
+% Maskeyi Gaussian Blur ile Yumuşatma
+mask = imgaussfilt(mask, 10);
+
+% Pyramid Blending
+blendedPyramid = blendPyramids(lp1, lp2, mask, levels);
+
+% Sonucu Yeniden Yapılandırma
+blendedImage = reconstructPyramid(blendedPyramid, levels);
+
+% Sonucu Görselleştirme
 figure;
 imshow(blendedImage, []);
-title('Stitched Image with Improved Blending');
+title('Stitched Image with Laplacian Pyramid Blending');
