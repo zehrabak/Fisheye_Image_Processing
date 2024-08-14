@@ -32,7 +32,7 @@ title('Matched Points');
 
 % Homografi matrisini tahmin etme
 [tform, inlierPoints1, inlierPoints2] = estimateGeometricTransform2D(matchedPoints1, matchedPoints2, 'projective', ...
-    'MaxDistance', 3, 'Confidence', 99.9, 'MaxNumTrials', 10000);
+    'MaxDistance', 10, 'Confidence', 99, 'MaxNumTrials', 20000);  % Daha fazla güven ve mesafe
 
 % Geometrik dönüşüm matrisini inceleme
 disp('Homografi matrisi:');
@@ -50,62 +50,30 @@ warpedImage1 = imwarp(fisheyeImage1, tform, 'OutputView', outputView);
 % İkinci görüntüyü yeni boyutlarına göre yeniden boyutlandırma
 warpedImage2 = imwarp(fisheyeImage2, affine2d(eye(3)), 'OutputView', outputView);
 
-% Boyutları eşitleme
-warpedImage2 = imresize(warpedImage2, size(warpedImage1(:,:,1)));
+% Maskeleri oluşturma
+mask1 = ones(size(warpedImage1, 1), size(warpedImage1, 2));
+mask2 = ones(size(warpedImage2, 1), size(warpedImage2, 2));
 
-% Laplacian Pyramid Blending Fonksiyonları
-function [lp, gp] = laplacianPyramid(img, level)
-    gp = cell(level, 1);
-    lp = cell(level, 1);
-    current = img;
-    for i = 1:level
-        gp{i} = current;
-        down = impyramid(current, 'reduce');
-        up = imresize(impyramid(down, 'expand'), size(current(:,:,1)));
-        lp{i} = current - up;
-        current = down;
-    end
-    gp{level} = current;
-    lp{level} = current;
-end
+% Feathering için maske oluşturma
+featherAmount = min(100, size(mask2, 2));  % Feathering miktarını artırma
 
-function blended = blendPyramids(lp1, lp2, mask, level)
-    blended = cell(level, 1);
-    for i = 1:level
-        blended{i} = lp1{i} .* mask + lp2{i} .* (1 - mask);
-    end
-end
+% Feathering ile mask1 oluşturma
+mask1(:, 1:imageSize(2)) = repmat(linspace(1, 0, imageSize(2)), imageSize(1), 1);
+mask1(:, imageSize(2)-featherAmount+1:imageSize(2)) = repmat(linspace(1, 0, featherAmount), imageSize(1), 1);
 
-function result = reconstructPyramid(lp, level)
-    current = lp{level};
-    for i = level-1:-1:1
-        up = imresize(impyramid(current, 'expand'), size(lp{i}(:,:,1)));
-        current = lp{i} + up;
-    end
-    result = current;
-end
+% Feathering ile mask2 oluşturma
+mask2(:, end-imageSize(2)+1:end) = repmat(linspace(0, 1, imageSize(2)), size(mask2, 1), 1);
+mask2(:, end-featherAmount+1:end) = repmat(linspace(0, 1, featherAmount), size(mask2, 1), 1);
 
-% Görüntüler için Laplacian Pyramid Oluşturma
-levels = 4; % Piramit seviyesi
-[lp1, gp1] = laplacianPyramid(im2double(warpedImage1), levels);
-[lp2, gp2] = laplacianPyramid(im2double(warpedImage2), levels);
+% Maskeleri normalize etme
+maskSum = mask1 + mask2;
+mask1 = mask1 ./ maskSum;
+mask2 = mask2 ./ maskSum;
 
-% Maskeleri Oluşturma
-mask = ones(size(warpedImage1, 1), size(warpedImage1, 2));
-blendWidth = round(imageSize(2) / 6);
-mask(:, end-blendWidth+1:end) = repmat(linspace(1, 0, blendWidth), size(mask, 1), 1);
-mask(:, 1:blendWidth) = repmat(linspace(0, 1, blendWidth), size(mask, 1), 1);
+% Maskeleri uygulayarak blend etme
+blendedImage = uint8(double(warpedImage1) .* mask1 + double(warpedImage2) .* mask2);
 
-% Maskeyi Gaussian Blur ile Yumuşatma
-mask = imgaussfilt(mask, 10);
-
-% Pyramid Blending
-blendedPyramid = blendPyramids(lp1, lp2, mask, levels);
-
-% Sonucu Yeniden Yapılandırma
-blendedImage = reconstructPyramid(blendedPyramid, levels);
-
-% Sonucu Görselleştirme
+% Sonucu görselleştirme
 figure;
-imshow(blendedImage, []);
-title('Stitched Image with Laplacian Pyramid Blending');
+imshow(blendedImage);
+title('Stitched Image with Enhanced Feathered Blending');
